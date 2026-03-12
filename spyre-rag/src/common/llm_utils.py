@@ -2,6 +2,7 @@ import logging
 import requests
 import time
 import json
+from requests.adapters import HTTPAdapter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -24,22 +25,45 @@ def tqdm_wrapper(iterable, **kwargs):
 
 settings = get_settings()
 
-def classify_text_with_llm(text_blocks, gen_model, llm_endpoint, pdf_path, batch_size=32):
-    all_prompts = [settings.prompts.llm_classify.format(text=item.strip()) for item in text_blocks]
-    decisions = []
+SESSION = None
 
-    # Process in batches using ThreadPoolExecutor for parallelism
-    with ThreadPoolExecutor(max_workers=batch_size) as executor:
-        futures = {
-            executor.submit(classify_single_text, prompt, gen_model, llm_endpoint): idx
-            for idx, prompt in enumerate(all_prompts)
-        }
+def create_llm_session(pool_maxsize, pool_connections: int = 2, pool_block: bool = True):
+    global SESSION
 
-        for future in tqdm_wrapper(as_completed(futures), total=len(all_prompts),
-                                   desc=f"Classifying table summaries of '{pdf_path}'"):
-            decisions.append(future.result())
+    # SESSION object will be used by instruct and embedding endpoints. Hence keeping pool_connections = 2
+    # Need to use SESSION object for following reasons:
+    # - To limit the number of concurrent requests getting created to instruct vLLM's API to 32
+    # - To fix the ephemeral port exhaustion issue during chunking, since numerous tokenize calls are made to embedding server
+    if SESSION is None:
+        adapter = HTTPAdapter(
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize,
+            pool_block=pool_block
+        )
 
-    return decisions
+        session = requests.Session()
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        SESSION = session
+
+
+# def classify_text_with_llm(text_blocks, gen_model, llm_endpoint, pdf_path, batch_size=32):
+#     all_prompts = [settings.prompts.llm_classify.format(text=item.strip()) for item in text_blocks]
+#     decisions = []
+
+#     # Process in batches using ThreadPoolExecutor for parallelism
+#     with ThreadPoolExecutor(max_workers=batch_size) as executor:
+#         futures = {
+#             executor.submit(classify_single_text, prompt, gen_model, llm_endpoint): idx
+#             for idx, prompt in enumerate(all_prompts)
+#         }
+
+#         for future in tqdm_wrapper(as_completed(futures), total=len(all_prompts),
+#                                    desc=f"Classifying table summaries of '{pdf_path}'"):
+#             decisions.append(future.result())
+
+#     return decisions
 
 @retry_on_transient_error(max_retries=3, initial_delay=1.0, backoff_multiplier=2.0)
 def classify_single_text(prompt, gen_model, llm_endpoint):
@@ -92,6 +116,98 @@ def summarize_table(table_html, gen_model, llm_endpoint, pdf_path, max_workers=3
             summaries[idx] = future.result()
 
     return summaries
+
+def classify_text_with_llm(text_blocks, gen_model, llm_endpoint, pdf_path, batch_size=48):
+    all_prompts = [settings.prompts.llm_classify.format(text=item.strip()) for item in text_blocks]
+    
+    decisions = []
+    for i in tqdm_wrapper(range(0, len(all_prompts), batch_size), desc=f"Classifying table summaries of '{pdf_path}'"):
+        batch_prompts = all_prompts[i:i + batch_size]
+
+        # Process each prompt individually since chat completions API doesn't support batch prompts
+        for prompt in batch_prompts:
+            payload = {
+                "model": gen_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 3,
+            }
+            
+            response = SESSION.post(f"{llm_endpoint}/v1/chat/completions", json=payload)
+            response.raise_for_status()
+            result = response.json()
+            choices = result.get("choices", [])
+            if choices:
+                reply = choices[0].get("message", {}).get("content", "").strip().lower()
+                decisions.append("yes" in reply)
+            else:
+                decisions.append(True)
+    return decisions
+
+# def summarize_and_classify_single_table(prompt, gen_model, llm_endpoint):
+#     if SESSION is None:
+#         raise RuntimeError("LLM session not initialized. Call create_llm_session() first.")
+    
+#     payload = {
+#         "model": gen_model,
+#         "messages": [{"role": "user", "content": prompt}],
+#         "temperature": 0,
+#         "max_tokens": 512,
+#         "stream": False,
+#     }
+
+#     try:
+#         response = SESSION.post(f"{llm_endpoint}/v1/chat/completions", json=payload)
+#         response.raise_for_status()
+#         data = response.json() or {}
+#         choices = data.get("choices", [])
+#         text = ""
+#         if choices:
+#             text = (choices[0].get("message", {}).get("content") or "").strip()
+#         summary = ""
+#         decision = True
+#         for line in text.splitlines():
+#             if line.lower().startswith("summary:"):
+#                 summary = line[len("summary:"):].strip()
+#             elif line.lower().startswith("decision:"):
+#                 decision = "yes" in line.lower()
+
+#         return summary or "No summary.", decision
+
+#     except Exception as e:
+#         logger.error(f"Error summarizing/classifying table: {e}")
+#         return "No summary.", True
+
+# def summarize_and_classify_tables(table_htmls, gen_model, llm_endpoint, pdf_path, max_workers=32):
+#     prompts = [
+#         settings.prompts.table_summary_and_classify.format(content=html)
+#         for html in table_htmls
+#     ]
+
+#     summaries: list[str] = [""] * len(prompts)
+#     decisions: list[bool] = [True] * len(prompts)
+
+#     with ThreadPoolExecutor(max_workers=min(max_workers, len(prompts))) as executor:
+#         futures = {
+#             executor.submit(
+#                 summarize_and_classify_single_table,
+#                 prompt,
+#                 gen_model,
+#                 llm_endpoint
+#             ): idx
+#             for idx, prompt in enumerate(prompts)
+#         }
+
+#         completed_futures = as_completed(futures)
+#         for future in tqdm_wrapper(
+#             completed_futures,
+#             total=len(prompts),
+#             desc=f"Summarizing & classifying tables of '{pdf_path}'"
+#         ):
+#             idx = futures[future]
+#             summaries[idx], decisions[idx] = future.result()
+
+#     return summaries, decisions
 
 @retry_on_transient_error(max_retries=3, initial_delay=1.0, backoff_multiplier=2.0)
 def query_vllm_models(llm_endpoint):
