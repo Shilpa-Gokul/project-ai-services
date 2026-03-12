@@ -13,7 +13,7 @@ from docling_core.types.doc.document import DoclingDocument
 from concurrent.futures import as_completed, ProcessPoolExecutor, ThreadPoolExecutor
 from sentence_splitter import SentenceSplitter
 
-from common.llm_utils import create_llm_session, summarize_and_classify_tables, tokenize_with_llm
+from common.llm_utils import create_llm_session, classify_text_with_llm, tokenize_with_llm
 from common.misc_utils import get_logger, text_suffix, table_suffix, chunk_suffix
 from digitize.pdf_utils import get_toc, get_matching_header_lvl, load_pdf_pages, find_text_font_size, get_pdf_page_count, convert_doc
 from digitize.status import StatusManager
@@ -141,20 +141,20 @@ def process_table(converted_doc, pdf_path, out_path, gen_model, gen_endpoint):
     table_dict = {}
     for table_ix, table in enumerate(tqdm_wrapper(converted_doc.tables, desc=f"Processing table content of '{pdf_path}'")):
         table_dict[table_ix] = {}
-        table_dict[table_ix]["html"] = table.export_to_html(doc=converted_doc)
+        table_dict[table_ix]["md"] = table.export_to_markdown()
         table_dict[table_ix]["caption"] = table.caption_text(doc=converted_doc)
 
-    table_htmls = [table_dict[key]["html"] for key in sorted(table_dict)]
+    table_mds = [table_dict[key]["md"] for key in sorted(table_dict)]
     table_captions_list = [table_dict[key]["caption"] for key in sorted(table_dict)]
 
-    table_summaries, decisions = summarize_and_classify_tables(table_htmls, gen_model, gen_endpoint, pdf_path)
+    decisions = classify_text_with_llm(table_mds, gen_model, gen_endpoint, pdf_path)
     filtered_table_dicts = {
         idx: {
-            'html': html,
+            'md': md,
             'caption': caption,
-            'summary': summary
+            #'summary': summary
         }
-        for idx, (keep, html, caption, summary) in enumerate(zip(decisions, table_htmls, table_captions_list, table_summaries)) if keep
+        for idx, (keep, md, caption) in enumerate(zip(decisions, table_mds, table_captions_list)) if keep
     }
     table_count = len(filtered_table_dicts)
     out_path.write_text(json.dumps(filtered_table_dicts, indent=2), encoding="utf-8")
@@ -734,10 +734,10 @@ def create_chunk_documents(in_txt_f, in_tab_f, orig_fn):
             #     metadata={"filename": orig_fn, "type": "table", "source": block.get('html'), "chunk_id": tab_id}
             # ))
             tab_docs.append({
-                "page_content": f"{block.get('caption')}\n\n{block.get('summary')}" if block.get("caption") else block.get("summary"),
+                "page_content": f"{block.get('caption')}\n\n{block.get('md')}" if block.get("caption") else block.get("md"),
                 "filename": orig_fn,
                 "type": "table",
-                "source": block.get("html"),
+                "source": block.get("caption"),
                 "language": "en"
             })
 

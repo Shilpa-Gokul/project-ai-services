@@ -10,7 +10,7 @@ logger = get_logger("settings")
 class Prompts:
     query_vllm_stream: str
     query_vllm_stream_de:str
-    table_summary_and_classify: str
+    llm_classify: str
     summarize_system_prompt: str
     summarize_user_prompt_with_length: str
     summarize_user_prompt_without_length: str
@@ -19,7 +19,7 @@ class Prompts:
         if any(prompt in (None, "") for prompt in (
             self.query_vllm_stream,
             self.query_vllm_stream_de,
-            self.table_summary_and_classify,
+            self.llm_classify,
             self.summarize_system_prompt,
             self.summarize_user_prompt_with_length,
             self.summarize_user_prompt_without_length
@@ -36,7 +36,7 @@ class Prompts:
         required_fields = [
             "query_vllm_stream",
             "query_vllm_stream_de",
-            "table_summary_and_classify",
+            "llm_classify",
             "summarize_system_prompt",
             "summarize_user_prompt_with_length",
             "summarize_user_prompt_without_length"
@@ -49,7 +49,7 @@ class Prompts:
         return cls(
             query_vllm_stream = data["query_vllm_stream"],
             query_vllm_stream_de = data["query_vllm_stream_de"],
-            table_summary_and_classify = data["table_summary_and_classify"],
+            llm_classify = data["llm_classify"],
             summarize_system_prompt = data["summarize_system_prompt"],
             summarize_user_prompt_with_length = data["summarize_user_prompt_with_length"],
             summarize_user_prompt_without_length = data["summarize_user_prompt_without_length"]
