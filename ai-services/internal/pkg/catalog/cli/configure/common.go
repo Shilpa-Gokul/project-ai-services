@@ -15,4 +15,6 @@ const (
 	ArgParamPodmanAuthFileContent = "backend.podman.authFileContent"
 	ArgParamPodmanURI             = "backend.podman.uri"
 	ArgParamCaddyHTTPSPort        = "caddy.httpsPort"
+	ArgParamManageIQURL	          = "manageiq.url"
+	ArgParamManageIQInsecure      = "manageiq.insecureFlag"
 )

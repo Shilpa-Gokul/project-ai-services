@@ -22,6 +22,8 @@ type PodmanConfigureOptions struct {
 	SSLCertPath string // Path to user-provided SSL certificate
 	SSLKeyPath  string // Path to user-provided SSL private key
 	HttpsPort   int
+	ManageiqURL string 
+	ManageiqInsecure bool
 }
 
 // OpenShiftConfigureOptions contains the configuration for configuring the catalog service on OpenShift runtime.
